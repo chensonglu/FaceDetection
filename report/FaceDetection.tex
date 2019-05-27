@@ -1,0 +1,198 @@
+\documentclass[a4paper]{article}
+
+\usepackage[english]{babel}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage[colorinlistoftodos]{todonotes}
+\usepackage{CJK}
+\usepackage{cite}
+\usepackage{float}
+\usepackage{multirow}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows}
+
+\tikzstyle{startstop} = [rectangle, rounded corners, minimum width=3cm, minimum height=1cm,text centered, draw=black, fill=red!30]
+\tikzstyle{io} = [trapezium, trapezium left angle=70, trapezium right angle=110, minimum width=3cm, minimum height=1cm, text width=3cm, text centered, draw=black, fill=blue!30]
+\tikzstyle{process} = [rectangle, minimum width=3cm, minimum height=1cm, text width=3cm, text centered, draw=black, fill=orange!30]
+\tikzstyle{decision} = [diamond, minimum width=3cm, minimum height=1cm, text centered, draw=black, fill=green!30]
+\tikzstyle{arrow} = [thick,->,>=stealth]
+
+\begin{document}
+\begin{CJK*}{GBK}{song}
+\renewcommand\figurename{图}
+\renewcommand\tablename{表}
+
+\title{人脸检测}
+
+\author{chensonglu}
+
+\date{\today}
+\maketitle
+
+\section{问题描述}
+\label{sec:intro}
+该问题来源于斯坦福大学2002-2003年春季的“数字图像处理课程”，题目就是"Face Detection"\cite{site1}。原题目比较复杂，除了人脸检测之外还有性别识别，结果评测需要通过专门的评测程序，最终结果要考虑运行时间、人脸检测的准确率和性别识别的正确率。我将题目进行了简化，只关心其中的人脸检测部分，尽可能提高人脸检测的准确率。
+
+这个项目提供了七张训练图片和对应的Ground Truth。如下，图\ref{fig:1}是其中的一张测试图片和对应的Ground Truth。
+
+\begin{figure}[H]
+\centering
+\subfigure[训练图片] { \label{fig:1a}
+\includegraphics[width=0.4\columnwidth]{Training_1.jpg}
+}
+\subfigure[Ground Truth] { \label{fig:1b}
+\includegraphics[width=0.4\columnwidth]{ref1.png}
+}
+\caption{训练图片示例}
+\label{fig:1}
+\end{figure}
+
+图1(b)中白色的部分表示男生的人脸，红色表示女生的人脸。在该实验中不涉及性别识别，所以不考虑这个区别。
+
+七张训练图片中包含的人都大体相同，只是每个人的位置和图片的背景有所区别。除了七张训练图片外，这个项目还提供了一张测试图片和对应的Ground Truth，我要做的就是根据所有的训练图片找出测试图片中的人脸。
+\section{算法描述}
+\label{sec:theory}
+
+\subsection{颜色分割}
+\label{sec:colorSeg}
+利用颜色分割的方式进行人脸分割是一种非常成熟的方法，常见的颜色模型有RGB、HSV、YIQ和YCbCr等。该实验要处理的图片都是基于RGB模型，但是RGB图片三个通道之间的关联性很强并且容易受到不同光照的影响，不太适合于图片阈值分割。
+该实验采用YCbCr颜色模型，其中Y分量包含亮度信息，Cb和Cr分量包含色度信息，因此去掉Y分量就可以减少不同亮度条件下对人脸检测的影响。
+RGB转换到YCbCr的公式如下式(\ref{eq:1})。
+
+\begin{equation}
+\begin{bmatrix} Y \\ Cb \\ Cr \end{bmatrix} =
+\begin{bmatrix} 0.299 & 0.587 & 0.114 \\ -0.169 & -0.331 & 0.500 \\ 0.500 & -0.419 & -0.081 \end{bmatrix}
+\begin{bmatrix} R \\ G \\ B \end{bmatrix}
+\label{eq:1}
+\end{equation}
+
+在Matlab中自带了rgb2ycbcr的函数，可以方便地实现颜色空间转换，但是并没有按照式(\ref{eq:1})进行转换，最终的结果都是无符号数。我自己按照上式重新完成了ycbcr.m的函数。
+
+cbcrPlate.m调用ycbcr.m，可以得到所有训练图片中的人脸在Cb-Cr坐标系下的分布，如下图\ref{fig:2}。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.4\columnwidth]{cbcrPlate.png}
+\caption{Cb-Cr分布}
+\label{fig:2}
+\end{figure}
+
+cbcrPlate.m可以得到人脸在Cb-Cr坐标系下的均值和标准差，如下式(\ref{eq:2})。
+
+\begin{equation}
+\begin{bmatrix} cb\_mean & cb\_std \\ cr\_mean & cr\_std \end{bmatrix} =
+\begin{bmatrix} -11.7334 & 5.6738 \\ 23.3290 & 7.1929 \end{bmatrix}
+\label{eq:2}
+\end{equation}
+
+图\ref{fig:2}中绿框是根据实验得到的经验范围，以cb\_mean和cr\_mean为中点，宽为4倍的cb\_std，高为2倍的cr\_std。
+
+\subsection{人脸分割}
+
+根据\ref{sec:colorSeg}得到的Cb-Cr阈值，对测试图像进行二值化处理，可以初步得到图\ref{fig:3}的结果。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.6\columnwidth]{colorSeg.png}
+\caption{Cb-Cr阈值分割}
+\label{fig:3}
+\end{figure}
+
+从图\ref{fig:3}的结果开始，多次进行填补背景、去掉小面积前景、腐蚀、边缘提取，从而去掉大部分非皮肤的部分。最后利用统计信息去掉手、胳膊和腿部的皮肤。流程如下图。
+
+\begin{tikzpicture}[node distance=2cm]
+
+\node (start) [startstop] {开始};
+\node (in1) [io, below of=start] {七张测试图片和对应的Ground Truth，测试图片};
+\node (pro1) [process, below of=in1] {求出Cb-Cr阈值};
+\node (pro2) [process, below of=pro1] {根据阈值进行二值化};
+\node (pro3) [process, below of=pro2] {填补背景};
+\node (pro4) [process, below of=pro3] {去掉小面积前景};
+\node (pro5) [process, below of=pro4] {腐蚀};
+
+\node (pro6) [process, right of=start, xshift=5cm] {求出边缘，利用边缘图像和二值图像的交集分开重叠的人脸};
+\node (pro7) [process, below of=pro6] {再次腐蚀};
+\node (pro8) [process, below of=pro7] {再次填补背景};
+\node (pro9) [process, below of=pro8] {再次去掉小面积前景};
+\node (pro10)[process, below of=pro9] {根据统计去掉手、胳膊和腿部的皮肤};
+\node (ou1) [io, below of=pro10] {带人脸标记的测试图像};
+\node (end) [startstop, below of=ou1] {结束};
+
+\draw [arrow] (start) -- (in1);
+\draw [arrow] (in1) -- (pro1);
+\draw [arrow] (pro1) -- (pro2);
+\draw [arrow] (pro2) -- (pro3);
+\draw [arrow] (pro3) -- (pro4);
+\draw [arrow] (pro4) -- (pro5);
+
+\draw [arrow] (pro5) |- ([xshift=2.0cm, yshift=-0.5cm] pro5.south east) |- (pro6);
+\draw [arrow] (pro6) -- (pro7);
+\draw [arrow] (pro7) -- (pro8);
+\draw [arrow] (pro8) -- (pro9);
+\draw [arrow] (pro9) -- (pro10);
+\draw [arrow] (pro10) -- (ou1);
+\draw [arrow] (ou1) -- (end);
+\end{tikzpicture} \\
+
+其中去掉小面积前景的阈值设置为500像素，这是多次实验的结果，既可以去掉大部分无关的区域，又可以保留大多的人脸区域。腐蚀采用的是5*5的全1矩阵，两次使用腐蚀可以去掉小面积的前景并且有效的分开重叠的人脸。在第二次腐蚀之前需要进行边缘提取，这样可以提取出大部分人脸的轮廓。该实验采用的是参数为0.1的Roberts算子，这样既可以保证准确性，也可以保证提取速度，边缘提取结果如下图\ref{fig:4}。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.5\columnwidth]{roberts.png}
+\caption{边缘提取结果}
+\label{fig:4}
+\end{figure}
+
+通过流程图所示的处理之后，可以得到图\ref{fig:5}中的二值化图\ref{fig:5a}以及效果图\ref{fig:5b}。
+
+\begin{figure}[H]
+\centering
+\subfigure[二值化图] { \label{fig:5a}
+\includegraphics[height=0.5\columnwidth]{finalSeg.png}
+}
+\subfigure[效果图] { \label{fig:5b}
+\includegraphics[height=0.5\columnwidth]{final_skin.png}
+}
+\caption{皮肤检测图}
+\label{fig:5}
+\end{figure}
+
+从图中可以看出仍有部分手和胳膊被标记成了人脸，可以根据统计信息来去掉这些扰乱信息。统计信息主要包括标记区域的长、宽以及长宽比。通过实验可以得出当宽高比小于0.75或者大于3，或者宽小于40像素并且高小于50像素的情况下基本是非人脸区域，如图\ref{fig:6a}。人脸检测的最终结果如图\ref{fig:6b}。
+
+\begin{figure}[H]
+\centering
+\subfigure[标记区域统计结果] { \label{fig:6a}
+\includegraphics[height=0.5\columnwidth]{statistics.png}
+}
+\subfigure[人脸检测最终结果] { \label{fig:6b}
+\includegraphics[height=0.5\columnwidth]{final_face.png}
+}
+\caption{最终结果}
+\label{fig:6}
+\end{figure}
+
+\newpage
+\section{总结}
+
+该报告题目来源于斯坦福大学2002-2003年春季“数字图像处理”课程，题目就是"Face Detection"。评价标准包括正确检出数、错误检出数和人脸合并数。所有训练图片和测试图片的检测如下表\ref{tab:1}。当然目前存在的问题还有很多，比如漏检、错检、人脸合并、同一张人脸检测成多张等问题，需要进一步改善。
+
+\begin{table}[H]
+\begin{tabular}{|c|c|c|c|c|c|}
+\hline
+测试图片 & 图片人脸数 & 检出区域 & 正确检出数 & 错误检出数 & 人脸合并数 \\
+\hline
+TestImage.jpg & 23 & 23 & 21 & 2 & 1 \\
+\hline
+\end{tabular}
+\caption{检测结果}
+\label{tab:1}
+\end{table}
+
+\begin{thebibliography}{0}
+\bibitem{site1}
+  $http://web.stanford.edu/class/ee368/Project_03/project_03.html$
+
+\end{thebibliography}
+\end{CJK*}
+\end{document}
